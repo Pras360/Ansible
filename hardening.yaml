@@ -1,0 +1,13 @@
+---
+- name: Mengedit file yum.conf di managed nodes
+  hosts: managed
+  become: yes
+
+  tasks:
+    - name: set proxy di line yum.conf
+      ansible.builtin.lineinfile:
+        path: /etc/yum.conf
+        regexp: '^proxy='
+        line: proxy=http://10.9.1.23:8080
+        state: present
+
