@@ -1,0 +1,56 @@
+---
+- name: ini tentang mounting disk
+  hosts: managed
+  become: yes
+  vars: 
+    disk_name: "/dev/sdb"
+    mount_point: "/APP"
+    fs_type: "xfs"
+    partition_number: 1
+    partition_start: "0%"
+    partition_end: "100%" 
+
+  tasks:
+    - name: Pengecekan apakah sudah ada partisi
+      command: "lsblk -n -o NAME {{ disk_name }}{{ partition_number }}"
+      register: cek_partisi
+      ignore_errors: yes
+
+    - name: membuat partisi jika belum ada 
+      command: "parted -s {{ disk_name }} mklabel msdos mkpart primary {{ partition_start }} {{ partition_end }}"
+      when: cek_partisi.rc != 0
+
+    - name: Memeriksa apakah filesystem sudah ada
+      command: "blkid -o value -s TYPE {{ disk_name }}{{ partition_number }}"
+      register: cek_fs
+      ignore_errors: yes
+
+    - name: membuat filesystem jika belum ada
+      command: "mkfs.{{ fs_type }} -f {{ disk_name }}{{ partition_number }}"
+      when: cek_fs.stdout == ""
+
+    - name: memeriksa apakah mount point sudah ada 
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+    
+    - name: periksa file pada fstab apakah sudah terpasang
+      command: "grep -Fx '{{ disk_name }}{{ partition_number}} {{ mount_point }} {{ fs_type }} defaults 0 0' /etc/fstab"
+      register: cek_fstab
+      ignore_errors: yes
+
+    - name: tambahkan mount point ke fstab jika belum ada
+      ansible.builtin.lineinfile: 
+        path: /etc/fstab
+        line: "{{ disk_name }}{{ partition_number }} {{ mount_point }} {{ fs_type }} defaults 0 0"
+        state: present
+      when: cek_fstab.rc != 0
+
+    - name: mount filesystem
+      ansible.builtin.mount: 
+        path: "{{ mount_point }}"
+        src: "{{ disk_name }}{{ partition_number }}"
+        fstype: "{{ fs_type }}"
+        opts: defaults
+        state: mounted
+          

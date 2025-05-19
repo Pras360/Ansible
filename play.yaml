@@ -1,0 +1,131 @@
+---
+- name: Playbook ini akan mengerjakan beberapa task untuk cek status
+  hosts: managed
+  become: yes
+
+  tasks:
+    - name: Mengubah atau mengedit file /etc/yum.conf
+      ansible.builtin.lineinfile:
+         path: /etc/yum.conf
+         regexp: '^proxy='
+         line: proxy=http://10.9.1.23:8080
+         state: present
+
+    - name: tampilkan hasil dari cat /etc/yum.conf
+      ansible.builtin.shell: cat /etc/yum.conf
+      register: hasil_yumconf
+    - debug: 
+      # msg: "isi konfigurasi hasil_yumconf: {{ hasil_yumconf.stdout_lines }}" 
+        var: hasil_yumconf.stdout_lines
+
+    - name: mengubah hostname 
+      ansible.builtin.shell: hostnamectl hostname managednodes
+
+    - name: Menampilkan hostname
+      ansible.builtin.shell: hostnamectl
+      register: hasil_hostname
+    - debug:
+        var: hasil_hostname.stdout_lines 
+
+    - name: mengedit vchrony 
+      ansible.builtin.lineinfile:
+        path: /etc/chrony.conf
+        regexp: '^pool 2.centos.pool.ntp.org iburst'
+        state: absent
+
+    - name: menambahkan 2 server NTP
+      ansible.builtin.blockinfile:
+        path: /etc/chrony.conf
+        insertafter: '^# Please'
+        block: |
+          server 10.9.11.22 iburst
+          server 10.14.11.22 iburst
+          server local.alto.id iburst
+        marker: "# {mark} ANSIBLE MANAGED SERVICES"
+  
+    - name: Menonaktifkan sourcedir
+      ansible.builtin.replace:
+        path: /etc/chrony.conf
+        regexp: '^sourcedir /run/chrony-dhcp'
+        replace: '#sourcedir /run/chrony-dhcp'
+
+    - name: menjalankan chronyd secara permanent
+      ansible.builtin.shell: systemctl enable --now chronyd
+
+    - name: menampilkan status chronyd
+      ansible.builtin.shell: systemctl status chronyd
+      register: hasil_chronyd
+
+    - debug:
+        var: hasil_chronyd.stdout_lines
+
+    - name: set timezone ke jakarta
+      ansible.builtin.shell: timedatectl set-timezone "Asia/Jakarta"
+
+    - name: Menampilkan hasil timedatectl
+      ansible.builtin.shell: timedatectl
+      register: hasil_timedatectl
+
+    - debug: 
+        var: hasil_timedatectl.stdout_lines
+
+    - name: menambahkan dns resolver di resolv.conf
+      ansible.builtin.blockinfile:
+        path: /etc/resolv.conf
+        insertafter: '^# Generated'
+        block: |
+          search local.alto.id
+          nameserver 10.9.11.22
+          nameserver 10.14.11.22
+        marker: '# {mark} ANSIBLE MANAGE SERVICES'
+
+    - name: menampilkan /etc/resolv.conf
+      ansible.builtin.shell: cat /etc/resolv.conf
+      register: hasil_resolv
+
+    - debug: 
+        var: hasil_resolv.stdout_lines
+
+    - name: Menginput banner motd
+      ansible.builtin.blockinfile:
+        path: /etc/motd
+        block: |
+          ################################# WARNING ########################################  
+          ************** This is a company computer system, Notice to all users, *********** 
+          
+            This computer is the property of ALTO NETWORK, This computer system, including   
+            all related equipment, networks and network devices ( specifically including   
+            internet access) (“System”) are provided only for authorized employees of   
+            ALTO NETWORK., Any or all use of this System may be intercepted, monitored,   
+            recorded and audited for all lawful purposes, including to ensure their use   
+            this authorized, for management of the system, to facilitate protection against   
+            unauthorized access to verify security procedures., Unauthorized or improper   
+            use of this System may result in disciplinary action and/or civil charges/criminal   
+            penalties and/or prosecution by law. Evidence of unauthorized use collected during   
+            monitoring may be used for administrative, criminal, or other adverse action., By   
+            continuing to use this System you indicate your awareness of and consent to these   
+            terms and conditions of use.,   
+          
+          **********************************************************************************  
+          ################################################################################## 
+        marker: '# {mark} ANSIBLE MANAGE SERVICES'
+
+    - name: menampilkan hasil motd
+      ansible.builtin.shell: cat /etc/motd
+      register: hasil_motd
+
+    - debug: 
+        var: hasil_motd.stdout_lines
+
+    - name: mengintall beberapa package
+      ansible.builtin.yum: 
+        name:
+          - traceroute
+          - iputils
+          - telnet
+        state: present
+      register: hasil_yum
+
+    - debug:
+        var: hasil_yum.stdout_lines
+

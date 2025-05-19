@@ -2,14 +2,20 @@
 - name: Playbook ini akan mengerjakan beberapa task untuk cek status
   hosts: managed
   become: yes
+  vars:
+    disk_name: "/dev/sdb"
+    mount_point: "/APP"
+    fs_type: "xfs"
+    partition_number: 1
+    partition_start: "0%"
+    partition_end: "100%"
 
   tasks:
     - name: Mengubah atau mengedit file /etc/yum.conf
       ansible.builtin.lineinfile:
-         path: /etc/yum.conf
-         regexp: '^proxy='
-         line: proxy=http://10.9.1.23:8080
-         state: present
+        path: /etc/yum.conf
+        regexp: '^proxy='
+        state: absent
 
     - name: tampilkan hasil dari cat /etc/yum.conf
       ansible.builtin.shell: cat /etc/yum.conf
@@ -125,7 +131,186 @@
           - telnet
         state: present
       register: hasil_yum
+      ignore_errors: yes
 
     - debug:
         var: hasil_yum.stdout_lines
 
+    - name: Pengecekan apakah sudah ada partisi
+      command: "lsblk -n -o NAME {{ disk_name }}{{ partition_number }}"
+      register: cek_partisi
+      ignore_errors: yes
+
+    - name: membuat partisi jika belum ada 
+      command: "parted -s {{ disk_name }} mklabel msdos mkpart primary {{ partition_start }} {{ partition_end }}"
+      when: cek_partisi.rc != 0
+
+    - name: Memeriksa apakah filesystem sudah ada
+      command: "blkid -o value -s TYPE {{ disk_name }}{{ partition_number }}"
+      register: cek_fs
+      ignore_errors: yes
+
+    - name: membuat filesystem jika belum ada
+      command: "mkfs.{{ fs_type }} -f {{ disk_name }}{{ partition_number }}"
+      when: cek_fs.stdout == ""
+
+    - name: memeriksa apakah mount point sudah ada 
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+    
+    - name: periksa file pada fstab apakah sudah terpasang
+      command: "grep -Fx '{{ disk_name }}{{ partition_number}} {{ mount_point }} {{ fs_type }} defaults 0 0' /etc/fstab"
+      register: cek_fstab
+      ignore_errors: yes
+
+    - name: tambahkan mount point ke fstab jika belum ada
+      ansible.builtin.lineinfile: 
+        path: /etc/fstab
+        line: "{{ disk_name }}{{ partition_number }} {{ mount_point }} {{ fs_type }} defaults 0 0"
+        state: present
+      when: cek_fstab.rc != 0
+
+    - name: mount filesystem
+      ansible.builtin.mount: 
+        path: "{{ mount_point }}"
+        src: "{{ disk_name }}{{ partition_number }}"
+        fstype: "{{ fs_type }}"
+        opts: defaults
+        state: mounted
+      
+    - name: Pengecekan apakah sudah ada partisi
+      command: "lsblk -n -o NAME {{ disk_name }}{{ partition_number }}"
+      register: cek_partisi
+      ignore_errors: yes
+
+    - name: membuat partisi jika belum ada
+      command: "parted -s {{ disk_name }} mklabel msdos mkpart primary {{ partition_start }} {{ partition_end }}"
+      when: cek_partisi.rc != 0
+
+    - name: Memeriksa apakah filesystem sudah ada
+      command: "blkid -o value -s TYPE {{ disk_name }}{{ partition_number }}"
+      register: cek_fs
+      ignore_errors: yes
+
+    - name: membuat filesystem jika belum ada
+      command: "mkfs.{{ fs_type }} -f {{ disk_name }}{{ partition_number }}"
+      when: cek_fs.stdout == ""
+
+    - name: memeriksa apakah mount point sudah ada
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+
+    - name: periksa file pada fstab apakah sudah terpasang
+      command: "grep -Fx '{{ disk_name }}{{ partition_number}} {{ mount_point }} {{ fs_type }} defaults 0 0' /etc/fstab"
+      register: cek_fstab
+      ignore_errors: yes
+
+    - name: tambahkan mount point ke fstab jika belum ada
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "{{ disk_name }}{{ partition_number }} {{ mount_point }} {{ fs_type }} defaults 0 0"
+        state: present
+      when: cek_fstab.rc != 0
+
+    - name: mount filesystem
+      ansible.builtin.mount:
+        path: "{{ mount_point }}"
+        src: "{{ disk_name }}{{ partition_number }}"
+        fstype: "{{ fs_type }}"
+        opts: defaults
+        state: mounted
+
+    - name: stop and disable status firewalld
+      ansible.builtin.shell: |
+        systemctl stop firewalld
+        systemctl disable firewalld
+
+    - name: pengecekan status firewalld
+      ansible.builtin.shell: systemctl status firewalld
+      register: hasil_firewalld 
+      failed_when: false
+    - debug:
+        var: hasil_firewalld.stdout_lines
+
+    - name: Mengubah status selinux menjadi permissive
+      ansible.builtin.command: setenforce 0
+
+    - name: Mengecek status selinux
+      ansible.builtin.command: getenforce
+      register: hasil_getenforce
+
+    - debug: 
+        var: hasil_getenforce.stdout
+
+    - name: mengubah file /etc/selinux ke disabled
+      ansible.builtin.replace: 
+        path: /etc/selinux/config
+        regexp: "^SELINUX=.*"
+        replace: "SELINUX=Disabled"
+      when: hasil_getenforce.stdout == "Permissive"
+
+    - name: Menginstall net-snmp net-snmp-utils -y
+      ansible.builtin.yum:
+        name: 
+          - net-snmp
+          - net-snmp-utils
+        state: present
+    - name: mengecek apakah user altoprtgcom sudah ada
+      ansible.builtin.shell: grep -q '^rouser altoprtgcom' /etc/snmp/snmpd.conf
+      register: cek_usersnmp 
+      ignore_errors: true 
+
+    - name: membuat user snmp
+      ansible.builtin.shell: > 
+        net-snmp-create-v3-user -ro -A prtguser -a MD5 -x AES altoprtgcom
+      when: cek_usersnmp.rc != 0
+
+    - name: mengubah com2sec 
+      ansible.builtin.replace:
+        path: /etc/snmp/snmpd.conf
+        regexp: "^com2sec"
+        replace: "#com2sec"
+
+    - name: mengubah group
+      ansible.builtin.replace:
+        path: /etc/snmp/snmpd.conf
+        regexp: "^group"
+        replace: "#group"
+
+    - name: menampilkan hasil perubahan pada snmpd.conf
+      ansible.builtin.command: cat /etc/snmp/snmpd.conf
+      register: hasil_snmpdconf
+
+    - debug: 
+        var: hasil_snmpdconf.stdout_lines
+
+    - name: start service snmpd
+      ansible.builtin.shell: systemctl enable --now snmpd
+
+    - name: cek status service snmpd
+      ansible.builtin.shell: systemctl status snmpd
+      register: hasil_statussnmp
+
+    - debug:
+        var: hasil_statussnmp.stdout_lines
+
+    - name: join domain
+      ansible.builtin.yum:
+        name:
+          - realmd
+          - sssd
+          - sssd-tools
+          - adcli
+          - oddjob
+          - oddjob-mkhomedir
+          - samba-common-tools
+        state: present
+
+          #- name: join domain jika belum
+          # expect: 
+          # command: realm join --user=us.noc local.alto.id
+          # responses: 
+          # Password for us.noc: "Password" 
+          # when: "local.alto.id' not in hasil_realm.stdout"
